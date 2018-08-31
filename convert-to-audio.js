@@ -35,24 +35,31 @@ module.exports.handler = async function (event, context, callback) {
             // post into blocks of approximately 1,000 characters.
             var textBlocks = text.match(/.{1,1000}/g);
 
+            console.log(`text: ${text}, voice: ${voice}`);
+
             // For each block, invoke Polly API, which will transform text into audio
             textBlocks.forEach(block => {
+                console.log(block);
                 polly.synthesizeSpeech({
-                    text: block,
+                    Text: block,
                     VoiceId: voice,
                     OutputFormat: 'mp3'
-                }).promise()
+                })
+                .promise()
                 .then((response) => {
                     // Save the audio stream returned by Amazon Polly on Lambda's temp
                     // directory. If there are multiple text blocks, the audio stream
                     // will be combined into a single file.
+                    console.log(response);
                     var output = path.join('/tmp', postId);
                     if (response.AudioStream instanceof Buffer) {
                         fs.writeFileSync(output, response.AudioStream);
                         return fs.readFile(output);
                     }
+                    throw 'AudioStream is not buffer';
                 })
                 .then((data) => {
+                    console.log(data);
                     var uploadParams = {
                         Bucket: process.env.BUCKET_NAME,
                         Body: data,
@@ -61,6 +68,7 @@ module.exports.handler = async function (event, context, callback) {
                     return s3.putObject(uploadParams).promise();
                 })
                 .then((data) => {
+                    console.log(data);
                     return s3.putObjectAcl({
                         Bucket: process.env.BUCKET_NAME,
                         ACL: 'public-read',
@@ -68,11 +76,13 @@ module.exports.handler = async function (event, context, callback) {
                     }).promise();
                 })
                 .then((data) => {
+                    console.log(data);
                     return s3.getBucketLocation({
                         Bucket: process.env.BUCKET_NAME
                     }).promise();
                 })
                 .then((location) => {
+                    console.log(location);
                     var region = location.LocationConstraint;
                     var urlBegining;
                     if (region) {
@@ -96,7 +106,8 @@ module.exports.handler = async function (event, context, callback) {
                     }).promise();
                 })
                 .catch((err) => {
-                    throw err;
+                    console.log(err, err.stack);
+                    reject(err);
                 });
             });
             resolve();
