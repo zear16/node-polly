@@ -2,14 +2,10 @@ const AWS = require('aws-sdk');
 
 const docClient = new AWS.DynamoDB.DocumentClient();
 
-module.exports.getPosts = async function(event, context, callback) {
+module.exports.handler = (event, context, callback) => {
     var postId = event.postId;
 
-    var queryParam = {
-        TableName: process.env.DB_TABLE_NAME,
-        KeyConditionExpression: "Key('id').eq(postId)"
-    };
-
+    console.log(`postId: ${postId}`);
     if (postId === '*') {
         docClient.scan({
             TableName: process.env.DB_TABLE_NAME
@@ -20,8 +16,18 @@ module.exports.getPosts = async function(event, context, callback) {
             } else {
                 callback(null, data);
             }
-        })
+        });
     } else {
+        var queryParam = {
+            TableName: process.env.DB_TABLE_NAME,
+            ExpressionAttributeNames: {
+                '#id': 'id'
+            },
+            ExpressionAttributeValues: {
+                ':id': postId
+            },
+            KeyConditionExpression: '#id = :id'
+        };
         docClient.query(queryParam, (err, data) => {
             if (err) {
                 console.error(err, err.stack);
@@ -29,6 +35,6 @@ module.exports.getPosts = async function(event, context, callback) {
             } else {
                 callback(null, data);
             }
-        })
+        });
     }
 };
