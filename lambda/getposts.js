@@ -14,7 +14,7 @@ module.exports.handler = (event, context, callback) => {
                 console.error(err, err.stack);
                 callback(err);
             } else {
-                callback(null, data);
+                callback(null, data.Items);
             }
         });
     } else {
@@ -33,7 +33,7 @@ module.exports.handler = (event, context, callback) => {
                 console.error(err, err.stack);
                 callback(err);
             } else {
-                callback(null, data);
+                callback(null, data.Items);
             }
         });
     }
