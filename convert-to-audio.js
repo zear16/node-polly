@@ -7,7 +7,7 @@ const fs = require('fs');
 
 AWS.config.setPromisesDependency(null);
 
-module.exports.handler = async function (event, context, callback) {
+module.exports.handler = async (event, context, callback) => {
     var postId = event.Records[0].Sns.Message;
 
     console.log("Text to Speech function. Post ID in DynamoDB: " + postId);
@@ -24,11 +24,14 @@ module.exports.handler = async function (event, context, callback) {
         KeyConditionExpression: '#id = :id'
     };
 
-    return new Promise((resolve, reject) => {
-        docClient.query(queryParam).promise()
-        .then((data) => {
-            var text = data.Items[0].text;
-            var voice = data.Items[0].voice;
+    docClient.query(queryParam, (err, queryResult) => {
+        if (err) {
+            callback(err);
+        } else {
+            console.log('queryResult', JSON.stringify(queryResult, null, 2));
+
+            var text = queryResult.Items[0].text;
+            var voice = queryResult.Items[0].voice;
 
             // Because single invocation of the polly synthesize_speech api can
             // transform text with about 1,500 characters, we are dividing the
@@ -37,85 +40,94 @@ module.exports.handler = async function (event, context, callback) {
 
             console.log(`text: ${text}, voice: ${voice}`);
 
-            // For each block, invoke Polly API, which will transform text into audio
-            textBlocks.forEach(block => {
-                console.log(block);
-                polly.synthesizeSpeech({
-                    Text: block,
-                    VoiceId: voice,
-                    OutputFormat: 'mp3'
-                })
-                .promise()
-                .then((response) => {
+            // TODO : Convert text to audio only 1000 character
+            polly.synthesizeSpeech({
+                Text: text,
+                VoiceId: voice,
+                OutputFormat: 'mp3'
+            }, (err, audio) => {
+                if (err) {
+                    callback(err);
+                } else {
                     // Save the audio stream returned by Amazon Polly on Lambda's temp
                     // directory. If there are multiple text blocks, the audio stream
                     // will be combined into a single file.
-                    console.log(response);
-                    var output = path.join('/tmp', postId);
-                    if (response.AudioStream instanceof Buffer) {
-                        fs.writeFileSync(output, response.AudioStream);
-                        return fs.readFile(output);
-                    }
-                    throw 'AudioStream is not buffer';
-                })
-                .then((data) => {
-                    console.log(data);
-                    var uploadParams = {
-                        Bucket: process.env.BUCKET_NAME,
-                        Body: data,
-                        Key: postId + '.mp3'
-                    };
-                    return s3.putObject(uploadParams).promise();
-                })
-                .then((data) => {
-                    console.log(data);
-                    return s3.putObjectAcl({
-                        Bucket: process.env.BUCKET_NAME,
-                        ACL: 'public-read',
-                        Key: postId + '.mp3'
-                    }).promise();
-                })
-                .then((data) => {
-                    console.log(data);
-                    return s3.getBucketLocation({
-                        Bucket: process.env.BUCKET_NAME
-                    }).promise();
-                })
-                .then((location) => {
-                    console.log(location);
-                    var region = location.LocationConstraint;
-                    var urlBegining;
-                    if (region) {
-                        urlBegining = `https://s3-${region}.amazonaws.com`;
+                    var tempFile = path.join('/tmp', postId);
+                    if (audio.AudioStream instanceof Buffer) {
+                        console.log(`tempFile: ${tempFile}`);
+                        fs.writeFileSync(tempFile, audio.AudioStream);
+                        fs.readFile(tempFile, null, function (err, audioData) {
+                            if (err) {
+                                callback(err);
+                            } else {
+                                var uploadParams = {
+                                    Bucket: process.env.BUCKET_NAME,
+                                    Body: audioData,
+                                    Key: postId + '.mp3'
+                                };
+                                s3.putObject(uploadParams, function(err, data) {
+                                    if (err) {
+                                        callback(err);
+                                    } else {
+                                        console.log('data', JSON.stringify(data, null, 2));
+                                        s3.putObjectAcl({
+                                            Bucket: process.env.BUCKET_NAME,
+                                            ACL: 'public-read',
+                                            Key: postId + '.mp3'
+                                        }, function(err, data) {
+                                            if (err) {
+                                                callback(err);
+                                            } else {
+                                                s3.getBucketLocation({
+                                                    Bucket: process.env.BUCKET_NAME
+                                                }, function(err, location) {
+                                                    if (err) {
+                                                        callback(err);
+                                                    } else {
+                                                        console.log(`location: ${location}`);
+                                                        var region = location.LocationConstraint;
+                                                        console.log(`region: ${region}`);
+                                                        var urlBegining;
+                                                        if (region) {
+                                                            urlBegining = `https://s3-${region}.amazonaws.com`;
+                                                        } else {
+                                                            urlBegining = 'https://s3.amazonaws.com';
+                                                        }
+                                                        var url = `${urlBegining}/${process.env.BUCKET_NAME}/${postId}.mp3`;
+                                                        console.log(`url: ${url}`);
+                                                        docClient.update({
+                                                            Key: {
+                                                                TableName: process.env.DB_TABLE_NAME,
+                                                                id: postId
+                                                            },
+                                                            UpdateExpression: 'SET #statusAtt = :statusValue, #urlAtt = :urlValue',
+                                                            ExpressionAttributeValues: {
+                                                                ':statusValue': 'UPDATED', ':urlValue': url
+                                                            },
+                                                            ExpressionAttributeNames: {
+                                                                '#statusAtt': 'status', '#urlAtt': 'url'
+                                                            }
+                                                        }, function(err, res) {
+                                                            if (err) {
+                                                                callback(err);
+                                                            } else {
+                                                                callback(null, res);
+                                                            }
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        })
+                                    }
+                                });
+                            }
+                        });
                     } else {
-                        urlBegining = 'https://s3.amazonaws.com';
+                        callback('AudioStream is not buffer');
                     }
-                    var url = `${urlBegining}${process.env.BUCKET_NAME}/${postId}.mp3`;
-                    return docClient.updateItem({
-                        Key: {
-                            TableName: process.env.DB_TABLE_NAME,
-                            id: postId
-                        },
-                        UpdateExpression: 'SET #statusAtt = :statusValue, #urlAtt = :urlValue',
-                        ExpressionAttributeValues: {
-                            ':statusValue': 'UPDATED', ':urlValue': url
-                        },
-                        ExpressionAttributeNames: {
-                            '#statusAtt': 'status', '#urlAtt': 'url'
-                        }
-                    }).promise();
-                })
-                .catch((err) => {
-                    console.log(err, err.stack);
-                    reject(err);
-                });
+                }
             });
-            resolve();
-        })
-        .catch((err) => {
-            console.error(err, err.stack);
-            reject(err);
-        })
+        }
     });
 
 };
