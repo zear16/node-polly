@@ -7,7 +7,7 @@ const fs = require('fs');
 
 AWS.config.setPromisesDependency(null);
 
-module.exports.handler = async (event, context, callback) => {
+module.exports.handler = function (event, context, callback) {
     var postId = event.Records[0].Sns.Message;
 
     console.log("Text to Speech function. Post ID in DynamoDB: " + postId);
@@ -24,7 +24,7 @@ module.exports.handler = async (event, context, callback) => {
         KeyConditionExpression: '#id = :id'
     };
 
-    docClient.query(queryParam, (err, queryResult) => {
+    docClient.query(queryParam, function(err, queryResult) {
         if (err) {
             callback(err);
         } else {
@@ -36,7 +36,7 @@ module.exports.handler = async (event, context, callback) => {
             // Because single invocation of the polly synthesize_speech api can
             // transform text with about 1,500 characters, we are dividing the
             // post into blocks of approximately 1,000 characters.
-            var textBlocks = text.match(/.{1,1000}/g);
+            //var textBlocks = text.match(/.{1,1000}/g);
 
             console.log(`text: ${text}, voice: ${voice}`);
 
@@ -45,7 +45,7 @@ module.exports.handler = async (event, context, callback) => {
                 Text: text,
                 VoiceId: voice,
                 OutputFormat: 'mp3'
-            }, (err, audio) => {
+            }, function(err, audio) {
                 if (err) {
                     callback(err);
                 } else {
@@ -84,7 +84,7 @@ module.exports.handler = async (event, context, callback) => {
                                                     if (err) {
                                                         callback(err);
                                                     } else {
-                                                        console.log(`location: ${location}`);
+                                                        console.log('location', JSON.stringify(location, null, 2));
                                                         var region = location.LocationConstraint;
                                                         console.log(`region: ${region}`);
                                                         var urlBegining;
@@ -96,9 +96,9 @@ module.exports.handler = async (event, context, callback) => {
                                                         var url = `${urlBegining}/${process.env.BUCKET_NAME}/${postId}.mp3`;
                                                         console.log(`url: ${url}`);
                                                         docClient.update({
+                                                            TableName: process.env.DB_TABLE_NAME,
                                                             Key: {
-                                                                TableName: process.env.DB_TABLE_NAME,
-                                                                id: postId
+                                                              'id': postId
                                                             },
                                                             UpdateExpression: 'SET #statusAtt = :statusValue, #urlAtt = :urlValue',
                                                             ExpressionAttributeValues: {
@@ -117,7 +117,7 @@ module.exports.handler = async (event, context, callback) => {
                                                     }
                                                 });
                                             }
-                                        })
+                                        });
                                     }
                                 });
                             }
